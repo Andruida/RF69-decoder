@@ -1,8 +1,10 @@
+from bitarray import bitarray
 import numpy as np
 from scipy import signal
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 import sys
+import kodolo
 #import json
 
 sampling_rate = 240000
@@ -80,6 +82,17 @@ def descramble(bits, lfsr=None):
 
     return bits_out
 
+def calculate_error(data_decoded, data_encoded):
+    if len(data_decoded) != 18:
+        return -1
+    bits_in = bitarray(endian="little")
+    bits_in.frombytes(data_decoded)
+    bits_with_error = bitarray(endian="little")
+    bits_with_error.frombytes(data_encoded)
+    bits_encoded = kodolo.encode(bits_in)
+    return (bits_with_error ^ bits_encoded).count()
+    
+
 while True:
     raw_bytes = sys.stdin.buffer.read(sampling_rate)
     if len(raw_bytes) == 0:
@@ -146,10 +159,21 @@ while True:
         data_bits = convert_to_bits(data_dsig)
         data_bits = descramble(data_bits, lfsr)
         data_bytes = convert_bits_to_int(data_bits)
-        # if packet_length != 19:
-        #     continue
+        
+        
         print(":".join([hex(b)[2:] if len(hex(b)[2:]) == 2 else "0"+hex(b)[2:] for b in data_bytes]))
-        print("".join([chr(b) for b in data_bytes[4:]]))
+        #print("".join([chr(b) for b in data_bytes[4:]]))
+        
+        
+        if packet_length == 32:
+            print("Hibajavított:")
+            data_decoded = kodolo.decode_bytes(data_bytes.tobytes())
+            print(":".join([hex(b)[2:] if len(hex(b)[2:]) == 2 else "0"+hex(b)[2:] for b in data_decoded]))
+            print("".join([chr(b) for b in data_decoded]))
+            print("Hibás bitek: ", calculate_error(data_decoded, data_bytes.tobytes()))
+        else:
+            print("".join([chr(b) for b in data_bytes]))
+            
         print()
 
 
