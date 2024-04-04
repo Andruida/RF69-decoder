@@ -1,11 +1,15 @@
-from bitarray import bitarray
 import numpy as np
 from scipy import signal
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 import sys
-import kodolo
+import time
+from concurrent.futures import ProcessPoolExecutor
+
+from process_data import process_data
 #import json
+
+benchmarking_output = False
 
 sampling_rate = 240000
 bit_rate = 2_400
@@ -28,6 +32,8 @@ packet_start2 = np.concatenate([packet_preamble2, packet_sync_word]) * 2 - 1
 
 #packet_start1 *= 1
 #packet_start2 *= 1
+
+executor = ProcessPoolExecutor()
 
 def gen_lfsr_sequence():
     state = 0
@@ -82,21 +88,12 @@ def descramble(bits, lfsr=None):
 
     return bits_out
 
-def calculate_error(data_decoded, data_encoded):
-    if len(data_decoded) != 18:
-        return -1
-    bits_in = bitarray(endian="little")
-    bits_in.frombytes(data_decoded)
-    bits_with_error = bitarray(endian="little")
-    bits_with_error.frombytes(data_encoded)
-    bits_encoded = kodolo.encode(bits_in)
-    return (bits_with_error ^ bits_encoded).count()
-    
-
 while True:
     raw_bytes = sys.stdin.buffer.read(sampling_rate)
+    # print("Input length:", len(raw_bytes))
     if len(raw_bytes) == 0:
         break
+    start_time = time.time()
     data = np.frombuffer(raw_bytes, dtype=np.uint8).astype(np.int16) - 128
 
     # find packet start
@@ -107,7 +104,7 @@ while True:
         # plt.plot(data)
         # plt.plot(corr)
         # plt.show()
-        # print("max corr: ",round(np.max(corr), 2))
+        #print("max corr: ",round(np.max(corr), 2))
         for i in range(len(corr)):
             if corr[i] > min_correlation:
                 if best_above_limit == -1:
@@ -123,10 +120,13 @@ while True:
 
     #print(packets)
     for begin in packets:
+        packet_decode_start = time.time()
         end_preamble = begin + len(packet_start1)
         end_length_byte = end_preamble + 8*bit_length
         if end_length_byte > len(data) or end_preamble > len(data) or len(data[begin:end_preamble]) == 0:
             print("Packet got cropped")
+            if end_length_byte - len(data) < 1:
+                continue
             newdata = np.frombuffer(sys.stdin.buffer.read(end_length_byte - len(data)), dtype=np.uint8).astype(np.int16) - 128
             data = np.concatenate((data, newdata))
             del newdata
@@ -137,16 +137,18 @@ while True:
         # plt.plot(convert_to_dsignal(kmeans.predict(data[begin:end_length_byte].reshape(-1, 1)), kmeans.cluster_centers_))
         # plt.show()
         #print(inverted)
-        # print(kmeans.cluster_centers_)
+        #print(kmeans.cluster_centers_)
         length_predict = kmeans.predict(data[end_preamble:end_length_byte].reshape(-1, 1))
         length_dsig = convert_to_dsignal(length_predict, kmeans.cluster_centers_)
         length_bits = convert_to_bits(length_dsig)
         length_bits = descramble(length_bits, lfsr)
-        packet_length = convert_bits_to_int(length_bits)[0]
-        if packet_length == 0:
-            print("Packet length is 0\n")
-            continue
-        print("Packet length:", packet_length)
+        detected_packet_length = convert_bits_to_int(length_bits)[0]
+        # if packet_length == 0:
+        #     print("Packet length is 0\n")
+        #     continue
+        print("detected packet length:", detected_packet_length)
+        packet_length = 224
+        print("using:", packet_length)
 
         end_data = end_length_byte + packet_length*8*bit_length
         if end_data > len(data):
@@ -161,22 +163,22 @@ while True:
         data_bytes = convert_bits_to_int(data_bits)
         
         
-        print(":".join([hex(b)[2:] if len(hex(b)[2:]) == 2 else "0"+hex(b)[2:] for b in data_bytes]))
+        #print(":".join([hex(b)[2:] if len(hex(b)[2:]) == 2 else "0"+hex(b)[2:] for b in data_bytes]))
         #print("".join([chr(b) for b in data_bytes[4:]]))
+        if benchmarking_output:
+            print("Time to decode packet:", time.time() - packet_decode_start)
         
+        executor.submit(
+            process_data, data_bytes, data_bits, detected_packet_length
+        )
         
-        if packet_length == 32:
-            print("Hibajavított:")
-            data_decoded = kodolo.decode_bytes(data_bytes.tobytes())
-            print(":".join([hex(b)[2:] if len(hex(b)[2:]) == 2 else "0"+hex(b)[2:] for b in data_decoded]))
-            print("".join([chr(b) for b in data_decoded]))
-            print("Hibás bitek: ", calculate_error(data_decoded, data_bytes.tobytes()))
-        else:
-            print("".join([chr(b) for b in data_bytes]))
-            
+        print()
+        
+    if benchmarking_output:
+        print("Time to process chunk:", time.time() - start_time)
         print()
 
-
+executor.shutdown(wait=True)
 
 
     #plt.savefig("fig.png")

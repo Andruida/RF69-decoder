@@ -42,6 +42,7 @@ int main()
 	double i1=0, i2, q1=0, q2, s;
 	for(;;)
 	{
+		if (feof(stdin)) break;
 		i2=((unsigned char)getchar()-127); q2=((unsigned char)getchar()-127);
 		
 		//Formula 1: http://www.dsprelated.com/showmessage/142012/1.php
